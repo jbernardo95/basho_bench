@@ -28,7 +28,8 @@
 
 -record(state, { client,
                  bucket,
-                 replies }).
+                 replies,
+                 clock }).
 
 %% ====================================================================
 %% API
@@ -74,45 +75,49 @@ new(Id) ->
         {ok, Client} ->
             {ok, #state { client = Client,
                           bucket = Bucket,
-                          replies = Replies }};
+                          replies = Replies,
+                          clock = 0 }};
         {error, Reason2} ->
             ?FAIL_MSG("Failed get a riak:client_connect to ~p: ~p\n", [TargetNode, Reason2])
     end.
 
-run(get, KeyGen, _ValueGen, State) ->
+run(get, KeyGen, _ValueGen, #state{clock = Clock} = State) ->
     Key = KeyGen(),
     case (State#state.client):get(State#state.bucket, Key, State#state.replies) of
-        {ok, _} ->
-            {ok, State};
+        {ok, Object} ->
+            Timestamp = riak_object:get_timestamp(Object),
+            {ok, State#state{clock = max(Clock, Timestamp)}};
         {error, notfound} ->
             {ok, State};
         {error, Reason} ->
             {error, Reason, State}
     end;
-run(put, KeyGen, ValueGen, State) ->
+run(put, KeyGen, ValueGen, #state{clock = Clock} = State) ->
     Robj = riak_object:new(State#state.bucket, KeyGen(), ValueGen()),
-    case (State#state.client):put(Robj, State#state.replies) of
-        ok ->
-            {ok, State};
+    case (State#state.client):put(Robj, Clock, State#state.replies) of
+        {ok, Timestamp} ->
+            {ok, State#state{clock = max(Clock, Timestamp)}};
         {error, Reason} ->
             {error, Reason, State}
     end;
-run(update, KeyGen, ValueGen, State) ->
+run(update, KeyGen, ValueGen, #state{clock = Clock} = State) ->
     Key = KeyGen(),
     case (State#state.client):get(State#state.bucket, Key, State#state.replies) of
         {ok, Robj} ->
+            Timestamp = riak_object:get_timestamp(Robj),
+            Clock1 = max(Clock, Timestamp),
             Robj2 = riak_object:update_value(Robj, ValueGen()),
-            case (State#state.client):put(Robj2, State#state.replies) of
-                ok ->
-                    {ok, State};
+            case (State#state.client):put(Robj2, Clock1, State#state.replies) of
+                {ok, Timestamp1} ->
+                    {ok, State#state{clock = max(Clock1, Timestamp1)}};
                 {error, Reason} ->
                     {error, Reason, State}
             end;
         {error, notfound} ->
             Robj = riak_object:new(State#state.bucket, Key, ValueGen()),
             case (State#state.client):put(Robj, State#state.replies) of
-                ok ->
-                    {ok, State};
+                {ok, Timestamp} ->
+                    {ok, State#state{clock = max(Clock, Timestamp)}};
                 {error, Reason} ->
                     {error, Reason, State}
             end
