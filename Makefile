@@ -15,8 +15,13 @@ all: deps compile
 
 .PHONY: deps compile rel lock locked-all locked-deps
 
-rel: deps compile
+generate:
 	cd rel && $(REBAR) generate skip_deps=true $(OVERLAY_VARS)
+
+zip-rel:
+	cd ./rel/basho_bench && zip -r ../basho_bench.zip *
+
+rel: deps compile generate zip-rel
 
 deps:
 	$(REBAR) get-deps
@@ -41,6 +46,10 @@ compile: deps
 
 clean:
 	@$(REBAR) clean
+
+relclean:
+	rm -rf ./rel/basho_bench
+	rm -rf ./rel/basho_bench.zip
 
 distclean: clean
 	@rm -rf basho_bench deps

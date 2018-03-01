@@ -3,6 +3,7 @@ deps/
 tests/
 /basho_bench
 /rel/basho_bench
+/rel/basho_bench.zip
 package
 .rebar
 *~
