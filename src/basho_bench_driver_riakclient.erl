@@ -92,13 +92,12 @@ run(get, KeyGen, _ValueGen, #state{clock = Clock} = State) ->
         {error, Reason} ->
             {error, Reason, State}
     end;
-run(put, KeyGen, ValueGen, #state{clock = Clock} = State) ->
-    Robj = riak_object:new(State#state.bucket, KeyGen(), ValueGen()),
-    case (State#state.client):put(Robj, Clock, State#state.replies) of
-        {ok, Timestamp} ->
-            {ok, State#state{clock = max(Clock, Timestamp)}};
-        {error, Reason} ->
-            {error, Reason, State}
+run(put, _KeyGen, _ValueGen, State) ->
+    case (State#state.client):sequencer_next() of
+        {ok, _N} ->
+            {ok, State};
+        _ ->
+            {error, error, State}
     end;
 run(update, KeyGen, ValueGen, #state{clock = Clock} = State) ->
     Key = KeyGen(),
