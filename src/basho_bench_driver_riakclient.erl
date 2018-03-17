@@ -67,6 +67,8 @@ new(Id) ->
     %% Try to ping each of the nodes
     ping_each(Nodes),
 
+    global:sync(),
+
     %% Choose the node using our ID as a modulus
     TargetNode = lists:nth((Id rem length(Nodes)+1), Nodes),
     ?INFO("Using target node ~p for worker ~p\n", [TargetNode, Id]),
