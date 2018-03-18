@@ -29,7 +29,8 @@
 -record(state, { client,
                  bucket,
                  replies,
-                 clock }).
+                 clock,
+                 id }).
 
 %% ====================================================================
 %% API
@@ -78,7 +79,8 @@ new(Id) ->
             {ok, #state { client = Client,
                           bucket = Bucket,
                           replies = Replies,
-                          clock = 0 }};
+                          clock = 0,
+                          id = Id }};
         {error, Reason2} ->
             ?FAIL_MSG("Failed get a riak:client_connect to ~p: ~p\n", [TargetNode, Reason2])
     end.
@@ -94,13 +96,13 @@ run(get, KeyGen, _ValueGen, #state{clock = Clock} = State) ->
         {error, Reason} ->
             {error, Reason, State}
     end;
-run(put, KeyGen, ValueGen, #state{clock = Clock} = State) ->
-    Robj = riak_object:new(State#state.bucket, KeyGen(), ValueGen()),
-    case (State#state.client):put(Robj, Clock, State#state.replies) of
-        {ok, Timestamp} ->
-            {ok, State#state{clock = max(Clock, Timestamp)}};
-        {error, Reason} ->
-            {error, Reason, State}
+run(put, KeyGen, _ValueGen, #state{id = Id} = State) ->
+    Timestamp = get_timestamp(),
+    case (State#state.client):append_to_log(KeyGen(), Timestamp, Id) of
+        ok ->
+            {ok, State#state{clock = Timestamp}};
+        _ ->
+            {error, error, State}
     end;
 run(update, KeyGen, ValueGen, #state{clock = Clock} = State) ->
     Key = KeyGen(),
@@ -148,3 +150,7 @@ ping_each([Node | Rest]) ->
         pang ->
             ?FAIL_MSG("Failed to ping node ~p\n", [Node])
     end.
+
+get_timestamp() ->
+    {MegaSecs, Secs, MicroSecs} = os:timestamp(),
+    (MegaSecs * 1000000 + Secs) * 1000000 + MicroSecs.
