@@ -30,7 +30,8 @@
                  bucket,
                  replies,
                  clock,
-                 id }).
+                 id,
+                 batching }).
 
 %% ====================================================================
 %% API
@@ -46,11 +47,12 @@ new(Id) ->
             ok
     end,
 
-    Nodes   = basho_bench_config:get(riakclient_nodes),
-    Cookie  = basho_bench_config:get(riakclient_cookie, 'riak'),
-    MyNode  = basho_bench_config:get(riakclient_mynode, [basho_bench, longnames]),
-    Replies = basho_bench_config:get(riakclient_replies, 2),
-    Bucket  = basho_bench_config:get(riakclient_bucket, <<"test">>),
+    Nodes    = basho_bench_config:get(riakclient_nodes),
+    Cookie   = basho_bench_config:get(riakclient_cookie, 'riak'),
+    MyNode   = basho_bench_config:get(riakclient_mynode, [basho_bench, longnames]),
+    Replies  = basho_bench_config:get(riakclient_replies, 2),
+    Bucket   = basho_bench_config:get(riakclient_bucket, <<"test">>),
+    Batching = basho_bench_config:get(riakclient_batching, 1),
 
     %% Try to spin up net_kernel
     case net_kernel:start(MyNode) of
@@ -80,7 +82,8 @@ new(Id) ->
                           bucket = Bucket,
                           replies = Replies,
                           clock = 0,
-                          id = Id }};
+                          id = Id,
+                          batching = Batching }};
         {error, Reason2} ->
             ?FAIL_MSG("Failed get a riak:client_connect to ~p: ~p\n", [TargetNode, Reason2])
     end.
@@ -96,11 +99,17 @@ run(get, KeyGen, _ValueGen, #state{clock = Clock} = State) ->
         {error, Reason} ->
             {error, Reason, State}
     end;
-run(put, KeyGen, _ValueGen, #state{id = Id} = State) ->
-    Timestamp = get_timestamp(),
-    case (State#state.client):append_to_log(KeyGen(), Timestamp, Id) of
+run(put, KeyGen, _ValueGen, #state{id = Id, batching = Batching} = State) ->
+    F = fun(_I) ->
+                Timestamp = get_timestamp(),
+                (State#state.client):new_log_record(KeyGen(), Timestamp)
+        end,
+    Records = lists:map(F, lists:seq(1, Batching)),
+
+    case (State#state.client):append_to_log(Records, Id) of
         ok ->
-            {ok, State#state{clock = Timestamp}};
+            % TODO update clock accordinfg to the append
+            {ok, State};
         _ ->
             {error, error, State}
     end;
