@@ -21,15 +21,11 @@
 %% -------------------------------------------------------------------
 -module(basho_bench_driver_riakclient).
 
--export([new/1,
-         run/4]).
+-export([new/1, run/4]).
 
 -include("basho_bench.hrl").
 
--record(state, { client,
-                 bucket,
-                 replies,
-                 clock }).
+-record(state, {client}).
 
 %% ====================================================================
 %% API
@@ -48,8 +44,6 @@ new(Id) ->
     Nodes   = basho_bench_config:get(riakclient_nodes),
     Cookie  = basho_bench_config:get(riakclient_cookie, 'riak'),
     MyNode  = basho_bench_config:get(riakclient_mynode, [basho_bench, longnames]),
-    Replies = basho_bench_config:get(riakclient_replies, 2),
-    Bucket  = basho_bench_config:get(riakclient_bucket, <<"test">>),
 
     %% Try to spin up net_kernel
     case net_kernel:start(MyNode) of
@@ -73,66 +67,48 @@ new(Id) ->
     TargetNode = lists:nth((Id rem length(Nodes)+1), Nodes),
     ?INFO("Using target node ~p for worker ~p\n", [TargetNode, Id]),
 
-    case riak:client_connect(TargetNode) of
+    case riak_kv_transactional_client:start_link(TargetNode) of
         {ok, Client} ->
-            {ok, #state { client = Client,
-                          bucket = Bucket,
-                          replies = Replies,
-                          clock = 0 }};
+            {ok, #state{client = Client}};
         {error, Reason2} ->
             ?FAIL_MSG("Failed get a riak:client_connect to ~p: ~p\n", [TargetNode, Reason2])
     end.
 
-run(get, KeyGen, _ValueGen, #state{clock = Clock} = State) ->
+run(get, KeyGen, _ValueGen, #state{client = Client} = State) ->
     Key = KeyGen(),
-    case (State#state.client):get(State#state.bucket, Key, State#state.replies) of
-        {ok, Object} ->
-            Timestamp = riak_object:get_timestamp(Object),
-            {ok, State#state{clock = max(Clock, Timestamp)}};
+    case riak_kv_transactional_client:get(Key, Client) of
+        {ok, _Object} ->
+            {ok, State};
         {error, notfound} ->
             {ok, State};
         {error, Reason} ->
             {error, Reason, State}
     end;
-run(put, KeyGen, ValueGen, #state{clock = Clock} = State) ->
-    Robj = riak_object:new(State#state.bucket, KeyGen(), ValueGen()),
-    case (State#state.client):put(Robj, Clock, State#state.replies) of
-        {ok, Timestamp} ->
-            {ok, State#state{clock = max(Clock, Timestamp)}};
-        {error, Reason} ->
-            {error, Reason, State}
-    end;
-run(update, KeyGen, ValueGen, #state{clock = Clock} = State) ->
-    Key = KeyGen(),
-    case (State#state.client):get(State#state.bucket, Key, State#state.replies) of
-        {ok, Robj} ->
-            Timestamp = riak_object:get_timestamp(Robj),
-            Clock1 = max(Clock, Timestamp),
-            Robj2 = riak_object:update_value(Robj, ValueGen()),
-            case (State#state.client):put(Robj2, Clock1, State#state.replies) of
-                {ok, Timestamp1} ->
-                    {ok, State#state{clock = max(Clock1, Timestamp1)}};
-                {error, Reason} ->
-                    {error, Reason, State}
-            end;
-        {error, notfound} ->
-            Robj = riak_object:new(State#state.bucket, Key, ValueGen()),
-            case (State#state.client):put(Robj, State#state.replies) of
-                {ok, Timestamp} ->
-                    {ok, State#state{clock = max(Clock, Timestamp)}};
-                {error, Reason} ->
-                    {error, Reason, State}
-            end
-    end;
-run(delete, KeyGen, _ValueGen, State) ->
-    case (State#state.client):delete(State#state.bucket, KeyGen(), State#state.replies) of
+run(put, KeyGen, ValueGen, #state{client = Client} = State) ->
+    case riak_kv_transactional_client:put(KeyGen(), ValueGen(), Client) of
         ok ->
             {ok, State};
-        {error, notfound} ->
+        {error, aborted} ->
+            {error, aborted, State}
+    end;
+run(update, KeyGen, ValueGen, #state{client = Client} = State) ->
+    Key = KeyGen(),
+
+    riak_kv_transactional_client:begin_transaction(Client),
+
+    riak_kv_transactional_client:get(Key, Client),
+    
+    riak_kv_transactional_client:put(Key, ValueGen(), Client),
+
+    case riak_kv_transactional_client:commit_transaction(Client) of
+        ok ->
             {ok, State};
-        {error, Reason} ->
-            {error, Reason, State}
-    end.
+        {error, aborted} ->
+            {error, aborted, State}
+    end;
+run(delete, _KeyGen, _ValueGen, State) ->
+    % TODO
+    {error, not_implemented, State}.
 
 
 %% ====================================================================
