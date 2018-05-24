@@ -74,41 +74,29 @@ new(Id) ->
             ?FAIL_MSG("Failed get a riak:client_connect to ~p: ~p\n", [TargetNode, Reason2])
     end.
 
-run(get, KeyGen, _ValueGen, #state{client = Client} = State) ->
-    Key = KeyGen(),
-    case riak_kv_transactional_client:get(Key, Client) of
-        {ok, _Object} ->
-            {ok, State};
-        {error, notfound} ->
-            {ok, State};
-        {error, Reason} ->
-            {error, Reason, State}
-    end;
-run(put, KeyGen, ValueGen, #state{client = Client} = State) ->
+run(single_object_tx, KeyGen, ValueGen, #state{client = Client} = State) ->
     case riak_kv_transactional_client:put(KeyGen(), ValueGen(), Client) of
         ok ->
             {ok, State};
         {error, aborted} ->
             {error, aborted, State}
     end;
-run(update, KeyGen, ValueGen, #state{client = Client} = State) ->
-    Key = KeyGen(),
+run(multi_object_tx, KeyGen, ValueGen, #state{client = Client} = State) ->
+    Key1 = KeyGen(),
+    Key2 = KeyGen(),
 
     riak_kv_transactional_client:begin_transaction(Client),
 
-    riak_kv_transactional_client:get(Key, Client),
-    
-    riak_kv_transactional_client:put(Key, ValueGen(), Client),
+    riak_kv_transactional_client:put(Key1, ValueGen(), Client),
+
+    riak_kv_transactional_client:put(Key2, ValueGen(), Client),
 
     case riak_kv_transactional_client:commit_transaction(Client) of
         ok ->
             {ok, State};
         {error, aborted} ->
             {error, aborted, State}
-    end;
-run(delete, _KeyGen, _ValueGen, State) ->
-    % TODO
-    {error, not_implemented, State}.
+    end.
 
 
 %% ====================================================================
