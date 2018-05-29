@@ -6,4 +6,7 @@
 # Make sure CWD is set to runner run dir
 cd $RUNNER_BASE_DIR/lib/basho_bench*/ebin
 
-ERL_LIBS=$RUNNER_BASE_DIR $ERTS_PATH/escript basho_bench.beam "$@"
+ERL_LIBS=$RUNNER_BASE_DIR $ERTS_PATH/escript basho_bench.beam -d $RUNNER_BASE_DIR/tests "$@"
+
+BENCH_NAME=$(ls -1 $RUNNER_BASE_DIR/tests | tail -2 | head -1).zip
+zip -r $RUNNER_BASE_DIR/tests/$BENCH_NAME $RUNNER_BASE_DIR/tests/current/*
