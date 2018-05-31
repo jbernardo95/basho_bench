@@ -32,20 +32,14 @@
 %% ====================================================================
 
 new(Id) ->
-    %% Make sure the path is setup such that we can get at riak_client
-    case code:which(riak_client) of
+    case code:which(riak_kv_transactional_client) of
         non_existing ->
-            ?FAIL_MSG("~s requires riak_client module to be available on code path.\n",
-                      [?MODULE]);
+            ?FAIL_MSG("~s requires riak_kv_transactional_client module to be available on the code path.\n", [?MODULE]);
         _ ->
             ok
     end,
 
-    Nodes   = basho_bench_config:get(riakclient_nodes),
-    Cookie  = basho_bench_config:get(riakclient_cookie, 'riak'),
-    MyNode  = basho_bench_config:get(riakclient_mynode, [basho_bench, longnames]),
-
-    %% Try to spin up net_kernel
+    MyNode = basho_bench_config:get(riakclient_mynode, [basho_bench, longnames]),
     case net_kernel:start(MyNode) of
         {ok, _} ->
             ?INFO("Net kernel started as ~p\n", [node()]);
@@ -55,41 +49,37 @@ new(Id) ->
             ?FAIL_MSG("Failed to start net_kernel for ~p: ~p\n", [?MODULE, Reason])
     end,
 
-    %% Initialize cookie for each of the nodes
-    [true = erlang:set_cookie(N, Cookie) || N <- Nodes],
-
-    %% Try to ping each of the nodes
-    ping_each(Nodes),
+    Nodes = basho_bench_config:get(riakclient_nodes),
+    Cookie = basho_bench_config:get(riakclient_cookie, 'riak'),
+    establish_connection_to_nodes(Nodes, Cookie),
 
     global:sync(),
 
-    %% Choose the node using our ID as a modulus
-    TargetNode = lists:nth((Id rem length(Nodes)+1), Nodes),
-    ?INFO("Using target node ~p for worker ~p\n", [TargetNode, Id]),
-
+    TargetNode = lists:nth(((Id - 1) rem length(Nodes)) + 1, Nodes),
     case riak_kv_transactional_client:start_link(TargetNode) of
         {ok, Client} ->
             {ok, #state{client = Client}};
         {error, Reason2} ->
-            ?FAIL_MSG("Failed get a riak:client_connect to ~p: ~p\n", [TargetNode, Reason2])
+            ?FAIL_MSG("Failed to start riak_kv_transactional_client: ~p\n", [Reason2])
     end.
 
-run(single_object_tx, KeyGen, ValueGen, #state{client = Client} = State) ->
-    case riak_kv_transactional_client:put(KeyGen(), ValueGen(), Client) of
+run(leaf_tx_manager_transaction, NodeBucketKeyGen, ValueGen, #state{client = Client} = State) ->
+    {Node, Bucket, Key} = NodeBucketKeyGen(leaf_tx_manager_transaction),
+    case riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen(), Client) of
         ok ->
             {ok, State};
         {error, aborted} ->
             {error, aborted, State}
     end;
-run(multi_object_tx, KeyGen, ValueGen, #state{client = Client} = State) ->
-    Key1 = KeyGen(),
-    Key2 = KeyGen(),
+run(root_tx_manager_transaction, NodeBucketKeyGen, ValueGen, #state{client = Client} = State) ->
+    [{Node1, Bucket1, Key1},
+     {Node2, Bucket2, Key2}] = NodeBucketKeyGen(root_tx_manager_transaction),
 
     riak_kv_transactional_client:begin_transaction(Client),
 
-    riak_kv_transactional_client:put(Key1, ValueGen(), Client),
+    riak_kv_transactional_client:put(Node1, Bucket1, Key1, ValueGen(), Client),
 
-    riak_kv_transactional_client:put(Key2, ValueGen(), Client),
+    riak_kv_transactional_client:put(Node2, Bucket2, Key2, ValueGen(), Client),
 
     case riak_kv_transactional_client:commit_transaction(Client) of
         ok ->
@@ -103,12 +93,13 @@ run(multi_object_tx, KeyGen, ValueGen, #state{client = Client} = State) ->
 %% Internal functions
 %% ====================================================================
 
-ping_each([]) ->
+establish_connection_to_nodes([], _Cookie) ->
     ok;
-ping_each([Node | Rest]) ->
+establish_connection_to_nodes([Node | Rest], Cookie) ->
+    erlang:set_cookie(Node, Cookie),
     case net_adm:ping(Node) of
         pong ->
-            ping_each(Rest);
+            establish_connection_to_nodes(Rest, Cookie);
         pang ->
-            ?FAIL_MSG("Failed to ping node ~p\n", [Node])
+            ?FAIL_MSG("Failed to establish connection to node ~p\n", [Node])
     end.
