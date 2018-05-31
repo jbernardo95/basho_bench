@@ -25,7 +25,7 @@
 
 -include("basho_bench.hrl").
 
--record(state, {client}).
+-record(state, {client, populate_last_key}).
 
 %% ====================================================================
 %% API
@@ -58,11 +58,24 @@ new(Id) ->
     TargetNode = lists:nth(((Id - 1) rem length(Nodes)) + 1, Nodes),
     case riak_kv_transactional_client:start_link(TargetNode) of
         {ok, Client} ->
-            {ok, #state{client = Client}};
+            {ok, #state{client = Client, populate_last_key = undefined}};
         {error, Reason2} ->
             ?FAIL_MSG("Failed to start riak_kv_transactional_client: ~p\n", [Reason2])
     end.
 
+run(populate, NodeBucketKeyGen, ValueGen, #state{client = Client,
+    populate_last_key = PopulateLastKey} = State) ->
+    case NodeBucketKeyGen({populate, PopulateLastKey}) of
+        {Node, Bucket, Key} ->
+            case riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen(), Client) of
+                ok ->
+                    {ok, State#state{populate_last_key = Key}};
+                {error, aborted} ->
+                    {error, aborted, State}
+            end;
+        max_key_reached ->
+            {stop, max_key_reached}
+    end;
 run(leaf_tx_manager_transaction, NodeBucketKeyGen, ValueGen, #state{client = Client} = State) ->
     {Node, Bucket, Key} = NodeBucketKeyGen(leaf_tx_manager_transaction),
     case riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen(), Client) of

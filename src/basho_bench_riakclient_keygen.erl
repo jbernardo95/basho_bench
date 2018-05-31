@@ -9,6 +9,22 @@ generate(WorkerId, MaxKey) ->
         do_generate(Operation, WorkerId, MaxKey)
     end.
 
+do_generate({populate, undefined}, WorkerId, NKeys) ->
+    do_generate({populate, -1}, WorkerId, NKeys);
+do_generate({populate, LastKeyBin}, WorkerId, NKeys) when is_binary(LastKeyBin) ->
+    LastKeyInt = bin_bigendian_to_int(LastKeyBin),
+    do_generate({populate, LastKeyInt}, WorkerId, NKeys);
+do_generate({populate, LastKey}, WorkerId, NKeys) when is_integer(LastKey) ->
+    Nodes = basho_bench_config:get(riakclient_nodes),
+    Node = lists:nth(((WorkerId - 1) rem length(Nodes)) + 1, Nodes),
+
+    NKeysPerNode = round(NKeys / length(Nodes)),
+    Key = LastKey + 1,
+    if
+        Key > NKeysPerNode -> max_key_reached;
+        true -> {Node, ?BASHO_BENCH_BUCKET, int_to_bin_bigendian(Key)}
+    end;
+
 do_generate(leaf_tx_manager_transaction, WorkerId, NKeys) ->
     Nodes = basho_bench_config:get(riakclient_nodes),
     Node = lists:nth(((WorkerId - 1) rem length(Nodes)) + 1, Nodes),
