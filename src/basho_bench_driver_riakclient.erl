@@ -56,7 +56,7 @@ new(Id) ->
     global:sync(),
 
     TargetNode = lists:nth(((Id - 1) rem length(Nodes)) + 1, Nodes),
-    case riak_kv_transactional_client:start_link(TargetNode) of
+    case riak:client_connect(TargetNode) of
         {ok, Client} ->
             {ok, #state{client = Client, populate_last_key = undefined}};
         {error, Reason2} ->
@@ -77,12 +77,12 @@ run(populate, NodeBucketKeyGen, ValueGen, #state{client = Client,
             {stop, max_key_reached}
     end;
 run(leaf_tx_manager_transaction, NodeBucketKeyGen, ValueGen, #state{client = Client} = State) ->
-    {Node, Bucket, Key} = NodeBucketKeyGen(leaf_tx_manager_transaction),
-    case riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen(), Client) of
+    Robj = riak_object:new(<<"basho_bench_bucket">>, NodeBucketKeyGen(), ValueGen()),
+    case Client:put(Robj, 1) of
         ok ->
             {ok, State};
-        {error, aborted} ->
-            {error, aborted, State}
+        {error, Reason} ->
+            {error, Reason, State}
     end;
 run(root_tx_manager_transaction, NodeBucketKeyGen, ValueGen, #state{client = Client} = State) ->
     [{Node1, Bucket1, Key1},
