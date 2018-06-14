@@ -76,21 +76,13 @@ run(populate, NodeBucketKeyGen, ValueGen, #state{client = Client,
         max_key_reached ->
             {stop, max_key_reached}
     end;
-run(leaf_tx_manager_transaction, NodeBucketKeyGen, ValueGen, #state{client = Client} = State) ->
-    {Node, Bucket, Key} = NodeBucketKeyGen(leaf_tx_manager_transaction),
-    case riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen(), Client) of
-        ok ->
-            {ok, State};
-        {error, aborted} ->
-            {error, aborted, State}
-    end;
-run(root_tx_manager_transaction, NodeBucketKeyGen, ValueGen, #state{client = Client} = State) ->
+run(Operation, NodeBucketKeyGen, ValueGen, #state{client = Client} = State) ->
     [{Node1, Bucket1, Key1},
-     {Node2, Bucket2, Key2}] = NodeBucketKeyGen(root_tx_manager_transaction),
+     {Node2, Bucket2, Key2}] = L = NodeBucketKeyGen(Operation),
 
     riak_kv_transactional_client:begin_transaction(Client),
 
-    riak_kv_transactional_client:put(Node1, Bucket1, Key1, ValueGen(), Client),
+    riak_kv_transactional_client:get(Node1, Bucket1, Key1, Client),
 
     riak_kv_transactional_client:put(Node2, Bucket2, Key2, ValueGen(), Client),
 

@@ -29,20 +29,23 @@ do_generate(leaf_tx_manager_transaction, WorkerId, NKeys) ->
     Nodes = basho_bench_config:get(riakclient_nodes),
     Node = lists:nth(((WorkerId - 1) rem length(Nodes)) + 1, Nodes),
 
-    NWorkers = basho_bench_config:get(concurrent),
-    NWorkersPerNode = round(NWorkers / length(Nodes)),
-    NKeysPerNode = round(NKeys / length(Nodes)),
-    NKeysPerWorkerPerNode = round(NKeysPerNode / NWorkersPerNode),
-    RandomInt = random:uniform(NKeysPerWorkerPerNode) - 1,
-    Key = ((WorkerId rem NWorkersPerNode) + 1) + (NWorkersPerNode * RandomInt),
+    {Key1, Key2} = generate_keys(WorkerId, NKeys),
 
-    {Node, ?BASHO_BENCH_BUCKET, int_to_bin_bigendian(Key)};
+    [{Node, ?BASHO_BENCH_BUCKET, int_to_bin_bigendian(Key1)},
+     {Node, ?BASHO_BENCH_BUCKET, int_to_bin_bigendian(Key2)}];
 
 do_generate(root_tx_manager_transaction, WorkerId, NKeys) ->
     Nodes = basho_bench_config:get(riakclient_nodes),
     Node1 = lists:nth(((WorkerId - 1) rem length(Nodes)) + 1, Nodes),
     Node2 = lists:nth((((WorkerId + 1) - 1) rem length(Nodes)) + 1, Nodes),
 
+    {Key1, Key2} = generate_keys(WorkerId, NKeys),
+
+    [{Node1, ?BASHO_BENCH_BUCKET, int_to_bin_bigendian(Key1)},
+     {Node2, ?BASHO_BENCH_BUCKET, int_to_bin_bigendian(Key2)}].
+
+generate_keys(WorkerId, NKeys) ->
+    Nodes = basho_bench_config:get(riakclient_nodes),
     NWorkers = basho_bench_config:get(concurrent),
     NWorkersPerNode = round((NWorkers * 2) / length(Nodes)),
     NKeysPerNode = round(NKeys / length(Nodes)),
@@ -51,9 +54,7 @@ do_generate(root_tx_manager_transaction, WorkerId, NKeys) ->
     RandomInt2 = random:uniform(NKeysPerWorkerPerNode) - 1,
     Key1 = ((WorkerId rem NWorkersPerNode) + 1) + (NWorkersPerNode * RandomInt1),
     Key2 = ((WorkerId rem NWorkersPerNode) + 1) + (NWorkersPerNode * RandomInt2),
-
-    [{Node1, ?BASHO_BENCH_BUCKET, int_to_bin_bigendian(Key1)},
-     {Node2, ?BASHO_BENCH_BUCKET, int_to_bin_bigendian(Key2)}].
+    {Key1, Key2}.
 
 bin_bigendian_to_int(Bin) ->
     <<N:32/big>> = Bin,
