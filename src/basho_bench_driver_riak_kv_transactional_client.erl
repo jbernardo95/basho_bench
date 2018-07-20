@@ -49,20 +49,18 @@ run(
   populate,
   NodeBucketKeyGen,
   ValueGen,
-  #state{id = Id,
-         client = Client,
+  #state{client = Client,
          populate_last_key = PopulateLastKey} = State
 ) ->
     case NodeBucketKeyGen({populate, PopulateLastKey}) of
-        {Node, Bucket, Key} ->
-            case riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen(), Client) of
-                ok ->
-                    {ok, State#state{populate_last_key = Key}};
-                {error, aborted} ->
-                    {error, aborted, State}
-            end;
         max_key_reached ->
-            {stop, max_key_reached}
+            {stop, max_key_reached};
+        Nbkeys ->
+            lists:foreach(fun({Node, Bucket, Key}) ->
+                              ok = riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen(), Client)
+                          end, Nbkeys),
+            [{_, _, Key} | _] = Nbkeys,
+            {ok, State#state{populate_last_key = Key}}
     end;
 
 run(TransactionType, NodeBucketKeyGen, ValueGen, #state{client = Client} = State) ->
@@ -75,14 +73,14 @@ run(TransactionType, NodeBucketKeyGen, ValueGen, #state{client = Client} = State
 
     riak_kv_transactional_client:begin_transaction(Client),
 
-    lists:foldl(fun(Operation, I) ->
-                    {Node, Bucket, Key} = lists:nth(I, Nbkeys),
-                    case Operation of
-                        get -> riak_kv_transactional_client:get(Node, Bucket, Key, Client);
-                        put -> riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen() ,Client)
-                    end,
-                    I + 1
-                end, 1, Operations),
+    lists:foreach(fun(I) ->
+                      Operation = lists:nth(I, Operations),
+                      {Node, Bucket, Key} = lists:nth(I, Nbkeys),
+                      case Operation of
+                          get -> riak_kv_transactional_client:get(Node, Bucket, Key, Client);
+                          put -> riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen() ,Client)
+                      end
+                  end, lists:seq(1, length(Operations))),
 
     case riak_kv_transactional_client:commit_transaction(Client) of
         ok ->
