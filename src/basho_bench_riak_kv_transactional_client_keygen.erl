@@ -18,14 +18,14 @@ do_generate({populate, LastKey}, WorkerId) when is_integer(LastKey) ->
     NWorkers = basho_bench_config:get(concurrent),
     NKeys = basho_bench_config:get(n_keys),
 
-    Nodes = worker_nodes(WorkerId),
+    WorkerNodes = worker_nodes(WorkerId),
     Bucket = int_to_bin_bigendian(WorkerId),
     Key = LastKey + 1,
     KeyBin = int_to_bin_bigendian(Key),
-    NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(Nodes)),
+    NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(WorkerNodes)),
     if
         Key > NKeysPerWorkerPerNode -> max_key_reached;
-        true -> lists:map(fun(Node) -> {Node, Bucket, KeyBin} end, Nodes)
+        true -> lists:map(fun(Node) -> {Node, Bucket, KeyBin} end, WorkerNodes)
     end;
 
 do_generate(local, WorkerId) ->
@@ -34,10 +34,12 @@ do_generate(local, WorkerId) ->
     NKeys = basho_bench_config:get(n_keys),
 
     NOperationsPerTransaction = lists:foldl(fun({_Operation, N}, Acc) -> N + Acc end, 0, OperationsPerTransaction),
-    [Node | _] = Nodes = worker_nodes(WorkerId),
-    NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(Nodes)),
-    Bucket = int_to_bin_bigendian(WorkerId),
-    lists:map(fun(_I) ->
+    WorkerNodes = worker_nodes(WorkerId),
+    WorkerBuckets = worker_buckets(WorkerId),
+    NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(WorkerNodes)),
+    lists:map(fun(I) ->
+                  Node = lists:nth(1, WorkerNodes),
+                  Bucket = lists:nth(((I - 1) rem length(WorkerBuckets)) + 1, WorkerBuckets),
                   Key = random:uniform(NKeysPerWorkerPerNode),
                   KeyBin = int_to_bin_bigendian(Key),
                   {Node, Bucket, KeyBin}
@@ -49,22 +51,32 @@ do_generate(distributed, WorkerId) ->
     NKeys = basho_bench_config:get(n_keys),
 
     NOperationsPerTransaction = lists:foldl(fun({_Operation, N}, Acc) -> N + Acc end, 0, OperationsPerTransaction),
-    Nodes = worker_nodes(WorkerId),
-    NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(Nodes)),
-    Bucket = int_to_bin_bigendian(WorkerId),
+    WorkerNodes = worker_nodes(WorkerId),
+    WorkerBuckets = worker_buckets(WorkerId),
+    NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(WorkerNodes)),
     lists:map(fun(I) ->
-                  Node = lists:nth(((I - 1) rem length(Nodes)) + 1, Nodes),
+                  Node = lists:nth((I rem length(WorkerNodes)) + 1, WorkerNodes),
+                  Bucket = lists:nth((I rem length(WorkerBuckets)) + 1, WorkerBuckets),
                   Key = random:uniform(NKeysPerWorkerPerNode),
                   KeyBin = int_to_bin_bigendian(Key),
                   {Node, Bucket, KeyBin}
-              end, lists:seq(1, NOperationsPerTransaction)).
+              end, lists:seq(0, (NOperationsPerTransaction - 1))).
 
+% Returns a list of nodes that a given worker can access according to the n_nodes_per_worker config parameter
 worker_nodes(WorkerId) ->
     Nodes = basho_bench_config:get(riak_nodes),
     NNodesPerWorker = basho_bench_config:get(n_nodes_per_worker, 2),
     lists:map(fun(I) ->
-                  lists:nth((((WorkerId - 1) + (I - 1)) rem length(Nodes)) + 1, Nodes)
-              end, lists:seq(1, NNodesPerWorker)).
+                  lists:nth((((WorkerId - 1) + I) rem length(Nodes)) + 1, Nodes)
+              end, lists:seq(0, (NNodesPerWorker - 1))).
+
+% Returns a list of buckets that a given worker can access according to the contention_level config parameter
+worker_buckets(WorkerId) ->
+    NWorkers = basho_bench_config:get(concurrent),
+    Contention = basho_bench_config:get(contention, 0),
+    lists:map(fun(I) ->
+                  int_to_bin_bigendian((((WorkerId - 1) + I) rem NWorkers) + 1)
+              end, lists:seq(0, Contention)).
 
 bin_bigendian_to_int(Bin) ->
     <<N:32/big>> = Bin,
