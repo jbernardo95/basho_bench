@@ -64,30 +64,15 @@ run(
     end;
 
 run(TransactionType, NodeBucketKeyGen, ValueGen, #state{client = Client} = State) ->
+    OperationsPerTransaction = basho_bench_config:get(operations_per_transaction),
+    MidOperations = lists:foldl(fun({Operation, N}, Acc) ->
+                                        [Operation || _I <- lists:seq(1, N)] ++ Acc
+                                end, [], OperationsPerTransaction),
+    Operations = [begin_transaction] ++ MidOperations ++ [commit_transaction],
+    
     Nbkeys = NodeBucketKeyGen(TransactionType),
 
-    OperationsPerTransaction = basho_bench_config:get(operations_per_transaction),
-    Operations = lists:foldl(fun({Operation, N}, Acc) ->
-                                     [Operation || _I <- lists:seq(1, N)] ++ Acc
-                             end, [], OperationsPerTransaction),
-
-    riak_kv_transactional_client:begin_transaction(Client),
-
-    lists:foreach(fun(I) ->
-                      Operation = lists:nth(I, Operations),
-                      {Node, Bucket, Key} = lists:nth(I, Nbkeys),
-                      case Operation of
-                          get -> riak_kv_transactional_client:get(Node, Bucket, Key, Client);
-                          put -> riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen() ,Client)
-                      end
-                  end, lists:seq(1, length(Operations))),
-
-    case riak_kv_transactional_client:commit_transaction(Client) of
-        ok ->
-            {ok, State};
-        {error, aborted}->
-            {error, aborted, State}
-    end.
+    execute_transaction(Operations, Nbkeys, ValueGen, State).
 
 %% ====================================================================
 %% Internal functions
@@ -102,4 +87,26 @@ establish_connection_to_nodes([Node | Rest], Cookie) ->
             establish_connection_to_nodes(Rest, Cookie);
         pang ->
             ?FAIL_MSG("Failed to establish connection to node ~p\n", [Node])
+    end.
+
+execute_transaction([begin_transaction | RestOperations], Nbkeys, ValueGen, #state{client = Client} = State) ->
+    ok = riak_kv_transactional_client:begin_transaction(Client),
+    execute_transaction(RestOperations, Nbkeys, ValueGen, State);
+
+execute_transaction([get | RestOperations], [{Node, Bucket, Key} | RestNbkeys], ValueGen, #state{client = Client} = State) ->
+    case riak_kv_transactional_client:get(Node, Bucket, Key, Client) of
+        {error, aborted} -> {error, aborted, State};
+        _ -> execute_transaction(RestOperations, RestNbkeys, ValueGen, State)
+    end;
+
+execute_transaction([put | RestOperations], [{Node, Bucket, Key} | RestNbkeys], ValueGen, #state{client = Client} = State) ->
+    ok = riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen(), Client),
+    execute_transaction(RestOperations, RestNbkeys, ValueGen, State);
+
+execute_transaction([commit_transaction], [], _ValueGen, #state{client = Client} = State) ->
+    case riak_kv_transactional_client:commit_transaction(Client) of
+        ok ->
+            {ok, State};
+        {error, Reason}->
+            {error, Reason, State}
     end.
