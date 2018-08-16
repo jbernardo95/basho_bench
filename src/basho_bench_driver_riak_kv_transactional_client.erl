@@ -103,6 +103,14 @@ execute_transaction([put | RestOperations], [{Node, Bucket, Key} | RestNbkeys], 
     ok = riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen(), Client),
     execute_transaction(RestOperations, RestNbkeys, ValueGen, State);
 
+execute_transaction([update| RestOperations], [{Node, Bucket, Key} | RestNbkeys], ValueGen, #state{client = Client} = State) ->
+    case riak_kv_transactional_client:get(Node, Bucket, Key, Client) of
+        {error, aborted} -> {error, aborted, State};
+        _ ->
+            ok = riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen(), Client),
+            execute_transaction(RestOperations, RestNbkeys, ValueGen, State)
+    end;
+
 execute_transaction([commit_transaction], [], _ValueGen, #state{client = Client} = State) ->
     case riak_kv_transactional_client:commit_transaction(Client) of
         ok ->
