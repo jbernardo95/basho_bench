@@ -35,11 +35,11 @@ do_generate(local, WorkerId) ->
 
     NOperationsPerTransaction = lists:foldl(fun({_Operation, N}, Acc) -> N + Acc end, 0, OperationsPerTransaction),
     WorkerNodes = worker_nodes(WorkerId),
-    WorkerBuckets = worker_buckets(WorkerId),
+    WorkerBuckets = worker_buckets(WorkerId, NOperationsPerTransaction),
     NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(WorkerNodes)),
     lists:map(fun(I) ->
                   Node = lists:nth(1, WorkerNodes),
-                  Bucket = lists:nth(((I - 1) rem length(WorkerBuckets)) + 1, WorkerBuckets),
+                  Bucket = lists:nth(I + 1, WorkerBuckets),
                   Key = random:uniform(NKeysPerWorkerPerNode),
                   KeyBin = int_to_bin_bigendian(Key),
                   {Node, Bucket, KeyBin}
@@ -52,11 +52,11 @@ do_generate(distributed, WorkerId) ->
 
     NOperationsPerTransaction = lists:foldl(fun({_Operation, N}, Acc) -> N + Acc end, 0, OperationsPerTransaction),
     WorkerNodes = worker_nodes(WorkerId),
-    WorkerBuckets = worker_buckets(WorkerId),
+    WorkerBuckets = worker_buckets(WorkerId, NOperationsPerTransaction),
     NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(WorkerNodes)),
     lists:map(fun(I) ->
                   Node = lists:nth((I rem length(WorkerNodes)) + 1, WorkerNodes),
-                  Bucket = lists:nth((I rem length(WorkerBuckets)) + 1, WorkerBuckets),
+                  Bucket = lists:nth(I + 1, WorkerBuckets),
                   Key = random:uniform(NKeysPerWorkerPerNode),
                   KeyBin = int_to_bin_bigendian(Key),
                   {Node, Bucket, KeyBin}
@@ -70,13 +70,15 @@ worker_nodes(WorkerId) ->
                   lists:nth((((WorkerId - 1) + I) rem length(Nodes)) + 1, Nodes)
               end, lists:seq(0, (NNodesPerWorker - 1))).
 
-% Returns a list of buckets that a given worker can access according to the contention_level config parameter
-worker_buckets(WorkerId) ->
+% Returns a list of buckets that a given worker can access according to the contention config parameter
+worker_buckets(WorkerId, NOperations) ->
     NWorkers = basho_bench_config:get(concurrent),
     Contention = basho_bench_config:get(contention, 0),
-    lists:map(fun(I) ->
-                  int_to_bin_bigendian((((WorkerId - 1) + I) rem NWorkers) + 1)
-              end, lists:seq(0, Contention)).
+    Buckets1 = [int_to_bin_bigendian(WorkerId) || _I <- lists:seq(1, NOperations - Contention)],
+    Buckets2 = lists:map(fun(I) ->
+                            int_to_bin_bigendian((((WorkerId - 1) + I) rem NWorkers) + 1)
+                         end, lists:seq(1, Contention)),
+    Buckets1 ++ Buckets2.
 
 bin_bigendian_to_int(Bin) ->
     <<N:32/big>> = Bin,
