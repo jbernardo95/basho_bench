@@ -39,7 +39,7 @@ do_generate(local, WorkerId) ->
     NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(WorkerNodes)),
     lists:map(fun(I) ->
                   Node = lists:nth(1, WorkerNodes),
-                  Bucket = lists:nth(I + 1, WorkerBuckets),
+                  Bucket = lists:nth(I, WorkerBuckets),
                   Key = random:uniform(NKeysPerWorkerPerNode),
                   KeyBin = int_to_bin_bigendian(Key),
                   {Node, Bucket, KeyBin}
@@ -55,12 +55,12 @@ do_generate(distributed, WorkerId) ->
     WorkerBuckets = worker_buckets(WorkerId, NOperationsPerTransaction),
     NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(WorkerNodes)),
     lists:map(fun(I) ->
-                  Node = lists:nth((I rem length(WorkerNodes)) + 1, WorkerNodes),
-                  Bucket = lists:nth(I + 1, WorkerBuckets),
+                  Node = lists:nth(((I - 1) rem length(WorkerNodes)) + 1, WorkerNodes),
+                  Bucket = lists:nth(I, WorkerBuckets),
                   Key = random:uniform(NKeysPerWorkerPerNode),
                   KeyBin = int_to_bin_bigendian(Key),
                   {Node, Bucket, KeyBin}
-              end, lists:seq(0, (NOperationsPerTransaction - 1))).
+              end, lists:seq(1, NOperationsPerTransaction)).
 
 % Returns a list of nodes that a given worker can access according to the n_nodes_per_worker config parameter
 worker_nodes(WorkerId) ->
