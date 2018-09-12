@@ -72,7 +72,9 @@ worker_nodes(WorkerId) ->
 
 % Returns a list of buckets that a given worker can access according to the contention config parameter
 worker_buckets(WorkerId, NOperations) ->
-    NWorkers = basho_bench_config:get(concurrent),
+    Concurrent = basho_bench_config:get(concurrent),
+    NBashoBenchNodes = basho_bench_config:get(n_basho_bench_nodes),
+    NWorkers = Concurrent * NBashoBenchNodes,
     Contention = basho_bench_config:get(contention, 0),
     Buckets1 = [int_to_bin_bigendian(WorkerId) || _I <- lists:seq(1, NOperations - Contention)],
     Buckets2 = lists:map(fun(I) ->
