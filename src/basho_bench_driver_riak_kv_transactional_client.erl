@@ -4,7 +4,7 @@
 
 -include("basho_bench.hrl").
 
--record(state, {id, client, populate_last_key}).
+-record(state, {id, worker_target_throughput, populate_last_key}).
 
 %% ====================================================================
 %% API
@@ -34,11 +34,22 @@ new(Id) ->
 
     global:sync(),
 
+    TargetThroughput = basho_bench_config:get(target_throughput),
+    NBashoBenchNodes = basho_bench_config:get(n_basho_bench_nodes),
+    TargetThroughputPerBashoBenchNode = TargetThroughput / NBashoBenchNodes, 
+    NWorkers = basho_bench_config:get(concurrent),
+    WorkerTargetThroughput = TargetThroughputPerBashoBenchNode / NWorkers,
+
     TargetNode = lists:nth(((Id - 1) rem length(Nodes)) + 1, Nodes),
+
+    State = #state{id = Id,
+                   worker_target_throughput = WorkerTargetThroughput,
+                   populate_last_key = undefined},
+    {ok, State};
+
     case riak_kv_transactional_client:start_link(TargetNode) of
         {ok, Client} ->
             State = #state{id = Id,
-                           client = Client,
                            populate_last_key = undefined},
             {ok, State};
         {error, Reason2} ->
@@ -64,15 +75,9 @@ run(
     end;
 
 run(TransactionType, NodeBucketKeyGen, ValueGen, #state{client = Client} = State) ->
-    OperationsPerTransaction = basho_bench_config:get(operations_per_transaction),
-    MidOperations = lists:foldl(fun({Operation, N}, Acc) ->
-                                        [Operation || _I <- lists:seq(1, N)] ++ Acc
-                                end, [], OperationsPerTransaction),
-    Operations = [begin_transaction] ++ MidOperations ++ [commit_transaction],
-    
-    Nbkeys = NodeBucketKeyGen(TransactionType),
-
-    execute_transaction(Operations, Nbkeys, ValueGen, State).
+    erlang:spawn_link(basho_bench_riak_kv_transactions_executor, execute_transaction, [TransactionType, NodeBucketKeyGen, ValueGen]),
+    timer:sleep(X),
+    {ok, State}.
 
 %% ====================================================================
 %% Internal functions
@@ -87,34 +92,4 @@ establish_connection_to_nodes([Node | Rest], Cookie) ->
             establish_connection_to_nodes(Rest, Cookie);
         pang ->
             ?FAIL_MSG("Failed to establish connection to node ~p\n", [Node])
-    end.
-
-execute_transaction([begin_transaction | RestOperations], Nbkeys, ValueGen, #state{client = Client} = State) ->
-    ok = riak_kv_transactional_client:begin_transaction(Client),
-    execute_transaction(RestOperations, Nbkeys, ValueGen, State);
-
-execute_transaction([get | RestOperations], [{Node, Bucket, Key} | RestNbkeys], ValueGen, #state{client = Client} = State) ->
-    case riak_kv_transactional_client:get(Node, Bucket, Key, Client) of
-        {error, aborted} -> {error, aborted, State};
-        _ -> execute_transaction(RestOperations, RestNbkeys, ValueGen, State)
-    end;
-
-execute_transaction([put | RestOperations], [{Node, Bucket, Key} | RestNbkeys], ValueGen, #state{client = Client} = State) ->
-    ok = riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen(), Client),
-    execute_transaction(RestOperations, RestNbkeys, ValueGen, State);
-
-execute_transaction([update| RestOperations], [{Node, Bucket, Key} | RestNbkeys], ValueGen, #state{client = Client} = State) ->
-    case riak_kv_transactional_client:get(Node, Bucket, Key, Client) of
-        {error, aborted} -> {error, aborted, State};
-        _ ->
-            ok = riak_kv_transactional_client:put(Node, Bucket, Key, ValueGen(), Client),
-            execute_transaction(RestOperations, RestNbkeys, ValueGen, State)
-    end;
-
-execute_transaction([commit_transaction], [], _ValueGen, #state{client = Client} = State) ->
-    case riak_kv_transactional_client:commit_transaction(Client) of
-        ok ->
-            {ok, State};
-        {error, Reason}->
-            {error, Reason, State}
     end.
