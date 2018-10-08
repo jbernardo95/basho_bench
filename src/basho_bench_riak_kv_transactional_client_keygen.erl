@@ -14,18 +14,17 @@ do_generate({populate, undefined}, WorkerId) ->
 do_generate({populate, LastKeyBin}, WorkerId) when is_binary(LastKeyBin) ->
     LastKeyInt = bin_bigendian_to_int(LastKeyBin),
     do_generate({populate, LastKeyInt}, WorkerId);
-do_generate({populate, LastKey}, WorkerId) when is_integer(LastKey) ->
-    NWorkers = basho_bench_config:get(concurrent),
+do_generate({populate, LastKey}, _WorkerId) when is_integer(LastKey) ->
+    RiakNodes = basho_bench_config:get(riak_nodes),
     NKeys = basho_bench_config:get(n_keys),
 
-    WorkerNodes = worker_nodes(WorkerId),
-    Bucket = int_to_bin_bigendian(WorkerId),
     Key = LastKey + 1,
+    Node = lists:nth(((Key - 1) rem length(RiakNodes)) + 1, RiakNodes),
+    Bucket = int_to_bin_bigendian(1),
     KeyBin = int_to_bin_bigendian(Key),
-    NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(WorkerNodes)),
     if
-        Key > NKeysPerWorkerPerNode -> max_key_reached;
-        true -> lists:map(fun(Node) -> {Node, Bucket, KeyBin} end, WorkerNodes)
+        Key > NKeys -> max_key_reached;
+        true -> [{Node, Bucket, KeyBin}]
     end;
 
 do_generate(local, WorkerId) ->
@@ -45,19 +44,16 @@ do_generate(local, WorkerId) ->
                   {Node, Bucket, KeyBin}
               end, lists:seq(1, NOperationsPerTransaction));
 
-do_generate(distributed, WorkerId) ->
-    NWorkers = basho_bench_config:get(concurrent),
+do_generate(distributed, _WorkerId) ->
     OperationsPerTransaction = basho_bench_config:get(operations_per_transaction),
     NKeys = basho_bench_config:get(n_keys),
+    RiakNodes = basho_bench_config:get(riak_nodes),
 
     NOperationsPerTransaction = lists:foldl(fun({_Operation, N}, Acc) -> N + Acc end, 0, OperationsPerTransaction),
-    WorkerNodes = worker_nodes(WorkerId),
-    WorkerBuckets = worker_buckets(WorkerId, NOperationsPerTransaction),
-    NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(WorkerNodes)),
-    lists:map(fun(I) ->
-                  Node = lists:nth(((I - 1) rem length(WorkerNodes)) + 1, WorkerNodes),
-                  Bucket = lists:nth(I, WorkerBuckets),
-                  Key = random:uniform(NKeysPerWorkerPerNode),
+    lists:map(fun(_I) ->
+                  Key = random:uniform(NKeys),
+                  Node = lists:nth(((Key - 1) rem length(RiakNodes)) + 1, RiakNodes),
+                  Bucket = int_to_bin_bigendian(1),
                   KeyBin = int_to_bin_bigendian(Key),
                   {Node, Bucket, KeyBin}
               end, lists:seq(1, NOperationsPerTransaction)).
