@@ -2,8 +2,6 @@
 
 -export([function/1]).
 
--define(BASHO_BENCH_BUCKET, <<"basho_bench_bucket">>).
-
 function(WorkerId) ->
     fun(TransactionType) ->
         do_generate(TransactionType, WorkerId)
@@ -19,7 +17,7 @@ do_generate({populate, LastKey}, WorkerId) when is_integer(LastKey) ->
     NKeys = basho_bench_config:get(n_keys),
 
     WorkerNodes = worker_nodes(WorkerId),
-    Bucket = int_to_bin_bigendian(WorkerId),
+    Bucket = worker_bucket(WorkerId),
     Key = LastKey + 1,
     KeyBin = int_to_bin_bigendian(Key),
     NKeysPerWorkerPerNode = round((NKeys / NWorkers) / length(WorkerNodes)),
@@ -73,12 +71,11 @@ worker_nodes(WorkerId) ->
 % Returns a list of buckets that a given worker can access according to the contention config parameter
 worker_buckets(WorkerId, NOperations) ->
     Concurrent = basho_bench_config:get(concurrent),
-    NBashoBenchNodes = basho_bench_config:get(n_basho_bench_nodes),
-    NWorkers = Concurrent * NBashoBenchNodes,
     Contention = basho_bench_config:get(contention, 0),
-    Buckets1 = [int_to_bin_bigendian(WorkerId) || _I <- lists:seq(1, NOperations - Contention)],
+
+    Buckets1 = [worker_bucket(WorkerId) || _I <- lists:seq(1, NOperations - Contention)],
     Buckets2 = lists:map(fun(I) ->
-                            int_to_bin_bigendian((((WorkerId - 1) + I) rem NWorkers) + 1)
+                            worker_bucket((((WorkerId - 1) + I) rem Concurrent) + 1)
                          end, lists:seq(1, Contention)),
     Buckets1 ++ Buckets2.
 
@@ -87,3 +84,9 @@ bin_bigendian_to_int(Bin) ->
     N.
 int_to_bin_bigendian(N) ->
     <<N:32/big>>.
+
+worker_bucket(WorkerId) ->
+    worker_bucket(WorkerId, node()).
+
+worker_bucket(WorkerId, Node) ->
+    list_to_binary(integer_to_list(WorkerId) ++ atom_to_list(Node)).
